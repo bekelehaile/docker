@@ -1,73 +1,37 @@
 #!/bin/bash
-
 set -e
 
-echo "Waiting for PostgreSQL and Redis..."
-
-until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" > /dev/null 2>&1; do
-  sleep 1
-done
-
-until redis-cli -h "$REDIS_HOST" ping | grep -q PONG; do
-  sleep 1
-done
-
-# Generate .env if missing
-if [ ! -f ".env" ]; then
-  echo "Generating .env..."
-  cp .env.example .env 2>/dev/null || touch .env
-
-  cat <<EOF > .env
-APP_NAME=Laravel
-APP_ENV=production
-APP_KEY=
-APP_DEBUG=false
-APP_URL=http://localhost
-
-LOG_CHANNEL=stack
-
-DB_CONNECTION=pgsql
-DB_HOST=$DB_HOST
-DB_PORT=$DB_PORT
-DB_DATABASE=$DB_DATABASE
-DB_USERNAME=$DB_USERNAME
-DB_PASSWORD=$DB_PASSWORD
-
-BROADCAST_DRIVER=log
-CACHE_DRIVER=redis
-QUEUE_CONNECTION=redis
-SESSION_DRIVER=redis
-REDIS_HOST=$REDIS_HOST
-EOF
-fi
-
-# Generate app key if not set
-if ! grep -q "^APP_KEY=" .env || grep -q "APP_KEY=$" .env; then
-  echo "Generating APP_KEY..."
-  php artisan key:generate --force
-fi
-
-# Laravel setup
-echo "Running Laravel setup..."
-composer install --no-dev --optimize-autoloader
-php artisan config:clear
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-php artisan migrate --force
-
-# Automate public/storage symlink once
-echo "Checking storage symlink..."
+# --- Step 3: Ensure storage symlink exists ---
 if [ ! -L "public/storage" ]; then
   echo "Creating storage symlink..."
   php artisan storage:link
 else
-  echo "Storage symlink already exists, skipping..."
+  echo "Storage symlink already exists."
 fi
 
-# Set permissions
-chown -R www-data:www-data storage bootstrap/cache
+# --- Step 4: (Optional) Enable maintenance mode before migration ---
+# echo "Putting application into maintenance mode..."
+# php artisan down
 
-# Start Supervisor
+# --- Step 5: Run migrations safely ---
+# echo "Running migrations..."
+# php artisan migrate 
+
+# --- Step 6: (Optional) Bring app out of maintenance mode ---
+# echo "Bringing application out of maintenance mode..."
+# php artisan up
+
+# --- Step 7: Cache config, routes, and views ---
+echo "Caching configuration..."
+php artisan optimize
+
+# --- Step 8: Optimize Filament icons (if Filament installed) ---
+php artisan filament:optimize || echo "Filament optimization skipped."
+
+# --- Step 9: Restart queue workers ---
+echo "Restarting queue workers..."
+php artisan queue:restart || echo "Queue restart failed or not configured."
+
+# --- Step 10: Start Supervisor as main process ---
 echo "Starting Supervisor..."
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
